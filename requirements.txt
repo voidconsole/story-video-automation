@@ -1,0 +1,7 @@
+openai
+google-api-python-client
+moviepy
+pytube
+requests
+python-dotenv
+gtts
