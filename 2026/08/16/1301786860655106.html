@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <title>Ad Astra</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            background-color: #000000;
+            overflow: hidden;
+            font-family: monospace;
+        }
+
+        /* Container for overlapping canvases */
+        #hero-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: default;
+        }
+
+        /* Background: Twinkling Matrix Stars */
+        #bg-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* Foreground: Ad Astra dynamic shape text */
+        #text-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="hero-container">
+        <canvas id="bg-canvas"></canvas>
+        <canvas id="text-canvas"></canvas>
+    </div>
+
+    <script>
+        // --- CONSTANTS & PERFORMANCE CACHES ---
+        const PI = Math.PI;
+        const TAU = PI * 2;
+        
+        const bgChars = '0123456789!@#$0123456789!@#$0123456789!@#$0123456789!@#$0123456789!@#$0123456789!@#$0123456789!@#$0123456789!@#$0123456789!@#$0123456789!@#$%^&*()_+-=[]{}%^&*()_+-=[]{}|;:,.<>?<>?<>?ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'.split('');
+        const bgCharCount = bgChars.length;
+        
+        const effectRadius = 65; 
+        const effectRadiusSq = effectRadius * effectRadius;
+        const invEffectRadius = 1 / effectRadius;
+        const inv220 = 1 / 220;
+
+        // Prebuilt alpha/opacity string caches (0.00 to 1.00) to avoid string generation allocations
+        const fillStyleCache = [];
+        for (let i = 0; i <= 100; i++) {
+            fillStyleCache[i] = `rgba(255, 255, 255, ${i * 0.01})`;
+        }
+
+        // Prebuilt monospace size cache to avoid heavy browser text-recalculations
+        const fontCache = {};
+        for (let s = 5; s <= 30; s++) {
+            fontCache[s] = `900 ${s}px monospace`;
+        }
+
+        // --- MOUSE TRACKING STATE ---
+        let mouseX = -1000;
+        let mouseY = -1000;
+
+        window.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+
+        window.addEventListener('mouseleave', () => {
+            mouseX = -1000;
+            mouseY = -1000;
+        });
+
+        // --- 1. BACKGROUND: TWINKLING MATRIX SPACE ---
+        const bgCanvas = document.getElementById('bg-canvas');
+        const bgCtx = bgCanvas.getContext('2d');
+        
+        let bgWidth, bgHeight;
+        const fontSize = 14;
+        let columns, rows;
+        let grid = [];
+
+        function initBg() {
+            bgWidth = bgCanvas.width = window.innerWidth;
+            bgHeight = bgCanvas.height = window.innerHeight;
+            columns = Math.floor(bgWidth / fontSize);
+            rows = Math.floor(bgHeight / fontSize);
+            grid = [];
+
+            for (let i = 0; i < columns; i++) {
+                grid[i] = [];
+                for (let j = 0; j < rows; j++) {
+                    grid[i][j] = {
+                        char: bgChars[Math.floor(Math.random() * bgCharCount)],
+                        opacity: Math.random(),
+                        speed: (Math.random() * 0.05) + 0.015, 
+                        phase: Math.random() * PI * 2,
+                        active: Math.random() > 0.4, 
+                        charTimer: Math.floor(Math.random() * 60),
+                        flare: 0 
+                    };
+                }
+            }
+        }
+
+        function drawBg() {
+            bgCtx.fillStyle = '#000000';
+            bgCtx.fillRect(0, 0, bgWidth, bgHeight);
+            bgCtx.font = `${fontSize}px monospace`;
+            bgCtx.textAlign = 'center';
+
+            let activeFillIdx = -1;
+
+            for (let i = 0; i < columns; i++) {
+                for (let j = 0; j < rows; j++) {
+                    let cell = grid[i][j];
+                    if (!cell.active) continue;
+
+                    let cellX = i * fontSize + (fontSize * 0.5);
+                    let cellY = j * fontSize + (fontSize * 0.5);
+                    
+                    let dx = cellX - mouseX;
+                    let dy = cellY - mouseY;
+                    let distSq = dx * dx + dy * dy;
+
+                    // Optimization 1: Skip square roots on distant particles
+                    let isInsideRadius = distSq < effectRadiusSq;
+                    let fadeFactor = 0;
+                    let speedFactor = 0;
+
+                    if (isInsideRadius) {
+                        let distance = Math.sqrt(distSq);
+                        let normDist = distance * invEffectRadius; // Optimization 7: Multiplication instead of division
+                        fadeFactor = Math.pow(1 - normDist, 4); 
+                        speedFactor = 1.0; 
+                    }
+
+                    let currentSpeedBoost = cell.speed + (speedFactor * 0.14);
+                    cell.phase += currentSpeedBoost;
+                    
+                    let currentOpacity = (Math.sin(cell.phase) + 1) * 0.5; 
+                    let baseOpacity = currentOpacity * 0.25; 
+                    
+                    if (cell.flare > 0) {
+                        cell.flare -= 0.03; 
+                        if (cell.flare < 0) cell.flare = 0;
+                    } else {
+                        if (Math.random() > 0.99985) { 
+                            cell.flare = 0.75; 
+                        }
+                    }
+
+                    let mouseBrightnessBoost = fadeFactor * 0.33;
+                    let finalOpacity = Math.min(1.0, baseOpacity + cell.flare + mouseBrightnessBoost);
+
+                    cell.charTimer += 1 + (speedFactor * 2);
+                    if (cell.charTimer > 60) {
+                        cell.char = bgChars[Math.floor(Math.random() * bgCharCount)]; // Optimization 8: Cached length
+                        cell.charTimer = Math.floor(Math.random() * 15); 
+                    }
+
+                    // Optimization 3: Quantize and cache fillStyles
+                    let opacityIdx = Math.min(100, Math.max(0, Math.round(finalOpacity * 100)));
+                    if (opacityIdx !== activeFillIdx) {
+                        bgCtx.fillStyle = fillStyleCache[opacityIdx];
+                        activeFillIdx = opacityIdx;
+                    }
+                    bgCtx.fillText(cell.char, cellX, cellY);
+                }
+            }
+        }
+
+
+        // --- 2. FOREGROUND: GEIST PIXEL "AD ASTRA" TEXT ---
+        const textCanvas = document.getElementById('text-canvas');
+        const textCtx = textCanvas.getContext('2d', { willReadFrequently: true });
+        
+        let textParticles = [];
+        const step = 10; 
+        
+        let textBounds = { xMin: 0, xMax: 0, yMin: 0, yMax: 0 };
+        let hoverFactor = 0; 
+        let currentRippleRadius = 0;
+        let maxRippleRadius = 0; // Optimization 4: Moved out of the animation frame loops
+
+        // Biased layout helper: mostly circles, squares, and triangles
+        function getRandomBiasedShape() {
+            const r = Math.random();
+            if (r < 0.30) return 1; // Circle
+            if (r < 0.60) return 0; // Square
+            if (r < 0.80) return 2; // Triangle
+            return Math.random() > 0.5 ? 3 : 4; // Plus or Scanline
+        }
+
+        function initText() {
+            textCanvas.width = window.innerWidth;
+            textCanvas.height = window.innerHeight;
+            textParticles = [];
+
+            maxRippleRadius = Math.max(textCanvas.width, textCanvas.height) * 1.3;
+
+            const offscreen = document.createElement('canvas');
+            const offCtx = offscreen.getContext('2d', { willReadFrequently: true });
+            offscreen.width = textCanvas.width;
+            offscreen.height = textCanvas.height;
+
+            offCtx.fillStyle = 'white';
+            const headerSize = Math.min(window.innerWidth / 3, 250); 
+            offCtx.font = `900 ${headerSize}px 'Mont', Impact, sans-serif`;
+            offCtx.textAlign = 'center';
+            offCtx.textBaseline = 'middle';
+            offCtx.fillText('Ad Astra', offscreen.width / 2, offscreen.height / 2);
+
+            const textWidth = offCtx.measureText('Ad Astra').width;
+            const textHeight = headerSize * 0.9;
+            textBounds = {
+                xMin: (textCanvas.width - textWidth) * 0.5 - 20,
+                xMax: (textCanvas.width + textWidth) * 0.5 + 20,
+                yMin: (textCanvas.height - textHeight) * 0.5 - 20,
+                yMax: (textCanvas.height + textHeight) * 0.5 + 20
+            };
+
+            const imgData = offCtx.getImageData(0, 0, offscreen.width, offscreen.height).data;
+
+            for (let y = 0; y < offscreen.height; y += step) {
+                for (let x = 0; x < offscreen.width; x += step) {
+                    const index = (y * offscreen.width + x) * 4;
+                    const alpha = imgData[index + 3];
+
+                    if (alpha > 128) { 
+                        textParticles.push({
+                            x: x,
+                            y: y,
+                            origY: y, 
+                            origX: x,
+                            staticShape: getRandomBiasedShape(), 
+                            staticFlipTimer: Math.floor(Math.random() * 500),
+                            flipDuration: 400 + Math.random() * 600,
+                            diseaseChar: bgChars[Math.floor(Math.random() * bgCharCount)],
+                            diseaseTimer: Math.floor(Math.random() * 10)
+                        });
+                    }
+                }
+            }
+        }
+
+        function drawShapes() {
+            textCtx.clearRect(0, 0, textCanvas.width, textCanvas.height);
+            
+            const isHovered = (mouseX >= textBounds.xMin && mouseX <= textBounds.xMax && 
+                               mouseY >= textBounds.yMin && mouseY <= textBounds.yMax);
+
+            if (isHovered) {
+                hoverFactor += (1.0 - hoverFactor) * 0.16;
+            } else {
+                hoverFactor += (0.0 - hoverFactor) * 0.12;
+            }
+
+            const targetRippleRadius = isHovered ? maxRippleRadius : 0;
+            
+            // --- ASYMMETRIC INTERPOLATION FIX ---
+            // If hovered, expand slow (0.00035). If unhovered, collapse super fast (0.15).
+            const interpolationSpeed = isHovered ? 0.015 : 0.05;
+            currentRippleRadius += (targetRippleRadius - currentRippleRadius) * interpolationSpeed; 
+
+            // Hard reset to 0 once it contracts close enough, ensuring it cleanly resets
+            if (!isHovered && currentRippleRadius < 1) {
+                currentRippleRadius = 0;
+            }
+
+            const size = step * 0.85; 
+
+            // Optimization 12: Set layout alignment state outside of the loop
+            textCtx.textAlign = 'center';
+            textCtx.textBaseline = 'middle';
+
+            // Local cache state trackers to avoid repeated mutations to the context properties
+            let activeFillStyle = '';
+            let activeFont = '';
+
+            for (let i = 0; i < textParticles.length; i++) {
+                let p = textParticles[i];
+
+                // Optimization 5: Cached properties
+                const ox = p.origX;
+                const oy = p.origY;
+
+                let px = ox;
+                let py = oy;
+
+                const dx = ox - mouseX;
+                const dy = oy - mouseY;
+                const distSq = dx * dx + dy * dy;
+
+                let localIntensity = 0;
+                if (isHovered) {
+                    const distanceToCursor = Math.sqrt(distSq);
+                    localIntensity = Math.min(1, Math.max(0, (currentRippleRadius - distanceToCursor) * inv220));
+                } else if (hoverFactor > 0) {
+                    const distanceToCursor = Math.sqrt(distSq);
+                    localIntensity = Math.min(1, Math.max(0, (currentRippleRadius - distanceToCursor) * inv220)) * hoverFactor;
+                }
+
+                // 1. OUTWARD DISPLACEMENT (Magnetic Push)
+                if (localIntensity > 0.01 && distSq > 0) {
+                    const angle = Math.atan2(oy - mouseY, ox - mouseX);
+                    // Optimization 6: Cache Math.sin/cos variables
+                    const cosA = Math.cos(angle);
+                    const sinA = Math.sin(angle);
+                    const pushDistance = 150 * Math.sin(localIntensity * PI * 0.8) * localIntensity;
+                    px += cosA * pushDistance;
+                    py += sinA * pushDistance;
+                }
+
+                // 2. STATIC FLIPS ENGINE (Only active when untouched by hover ripple)
+                if (localIntensity < 0.1) {
+                    p.staticFlipTimer++;
+                    if (p.staticFlipTimer > p.flipDuration) {
+                        p.staticShape = getRandomBiasedShape();
+                        p.staticFlipTimer = 0;
+                        p.flipDuration = 400 + Math.random() * 600;
+                    }
+                }
+
+                // 3. THE SPONTANEOUS "DISEASED" STATE
+                let drawAsGlitchNumber = false;
+                let activeShape = p.staticShape;
+
+                if (localIntensity > 0.12) {
+                    px += (Math.random() - 0.5) * 17 * localIntensity;
+                    py += (Math.random() - 0.5) * 17 * localIntensity;
+
+                    const diseaseWave = Math.sin(ox * 0.06 + oy * 0.06 + globalTime * 3.0);
+                    
+                    if (diseaseWave > 0.05) {
+                        drawAsGlitchNumber = true;
+                        p.diseaseTimer++;
+                        if (p.diseaseTimer > 3) { 
+                            p.diseaseChar = bgChars[Math.floor(Math.random() * bgCharCount)];
+                            p.diseaseTimer = 0;
+                        }
+                    } else {
+                        activeShape = Math.floor(Math.abs(Math.sin(ox * 0.15 + globalTime)) * 5);
+                    }
+                }
+
+                // 4. RENDER PASS
+                if (drawAsGlitchNumber) {
+                    // Optimization 2: Don't recreate string paths. Access prebuilt integer fontCache sizes
+                    const glitchedSize = Math.round(step * (0.9 + Math.random() * 0.45));
+                    const nextFont = fontCache[glitchedSize] || `900 ${glitchedSize}px monospace`;
+                    if (activeFont !== nextFont) {
+                        textCtx.font = nextFont;
+                        activeFont = nextFont;
+                    }
+
+                    // Optimization 3: Quantize and reuse string arrays
+                    const opacityIdx = Math.min(100, Math.max(0, Math.round(localIntensity * 100)));
+                    const nextStyle = fillStyleCache[opacityIdx];
+                    if (activeFillStyle !== nextStyle) {
+                        textCtx.fillStyle = nextStyle;
+                        activeFillStyle = nextStyle;
+                    }
+
+                    textCtx.fillText(p.diseaseChar, px, py);
+                } else {
+                    const nextStyle = '#ffffff';
+                    if (activeFillStyle !== nextStyle) {
+                        textCtx.fillStyle = nextStyle;
+                        activeFillStyle = nextStyle;
+                    }
+
+                    textCtx.beginPath();
+
+                    let activeSize = size;
+                    if (localIntensity > 0.12) {
+                        activeSize = size * (0.8 + Math.sin(globalTime * 12 + ox) * 0.25);
+                    }
+                    // Optimization 7: Multiplication instead of division
+                    let activeHalf = activeSize * 0.5;
+
+                    switch (activeShape) {
+                        case 0: // Square
+                            textCtx.rect(px - activeHalf, py - activeHalf, activeSize, activeSize);
+                            break;
+                        case 1: // Circle
+                            textCtx.arc(px, py, activeHalf, 0, TAU); // Optimization 11: Used TAU instead of Math.PI * 2
+                            break;
+                        case 2: // Triangle
+                            textCtx.moveTo(px, py - activeHalf);
+                            textCtx.lineTo(px + activeHalf, py + activeHalf);
+                            textCtx.lineTo(px - activeHalf, py + activeHalf);
+                            break;
+                        case 3: // Plus Symbols
+                            textCtx.rect(px - activeHalf, py - activeSize * 0.166667, activeSize, activeSize * 0.333333);
+                            textCtx.rect(px - activeSize * 0.166667, py - activeHalf, activeSize * 0.333333, activeSize);
+                            break;
+                        case 4: // Scanlines/Bars
+                            textCtx.rect(px - activeHalf, py - activeSize * 0.166667, activeSize, activeSize * 0.333333);
+                            break;
+                    }
+                    textCtx.fill();
+                }
+            }
+        }
+
+        // --- 3. ANIMATION LOOP & RESIZE HANDLING ---
+        let globalTime = 0;
+        
+        // Optimization 10: Use RAF timestamp directly to avoid manual date instantiation calls
+        function animate(timestamp) {
+            globalTime = timestamp * 0.005; 
+            drawBg();
+            drawShapes();
+            requestAnimationFrame(animate);
+        }
+
+        window.addEventListener('resize', () => {
+            initBg();
+            initText();
+        });
+
+        initBg();
+        initText();
+        requestAnimationFrame(animate);
+    </script>
+</body>
+</html>
